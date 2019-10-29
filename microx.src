@@ -1,0 +1,309 @@
+LIBRARY_FILE = "/home/" + active_user + "/exploitLib.txt"
+
+displayHelp = function()
+	print("The microx uses the following parameters:")
+	print("One of the following operation types must be provided on the command line")
+	print("scan    - Operation type: perform a scan of an object and return any vulnerabilities")
+	print("version - Operation type: return the version of an object")
+	print("exploit - Operation type: attack an exploit.  A library of exploits must be provided")
+	print()
+	print("-v    Verbose (Print some extra info)")
+	print("-f    Used to provide a file.  Typically this is a .so to perform an operation on")
+	print("-a    Used to provide an IP Address to perform a remote operation on an object")
+	print("-p    Used to proivde the port at which the object is.  If no port is provided, microx will assume this is a router.")
+	print("-l    Used to specify an exploit library.  If not provided, microx will look in the current directory for an exploitLib.txt file")
+end function
+
+getParam = function(paramType)
+	rnp=0
+	for param in params
+		if rnp then return param
+		if param == (paramType) then rnp=1
+	end for
+	return false
+end function
+
+getExploitLibFileName = function()
+	rVal = getParam("-l")
+	if not rVal then rVal = LIBRARY_FILE
+	return rVal
+end function
+
+isAParam = function(paramType)
+	for param in params
+		if param == paramType then return true
+	end for
+	return false
+end function
+
+info = function(str)
+	if isAParam("-v") then print("<I>  Info: " + str + "</I>")
+end function
+
+error = function(str)
+	print("  ERROR: " + str)
+end function
+
+loadLibrary = function(libFileName, search)
+	paths=[""]
+	if search then paths = [get_shell.host_computer.current_path, "/lib", "/bin", "/usr/bin"]
+	for p in paths
+		lib = include_lib(p + "/" + libFileName)
+		if lib then return lib
+	end for
+	error("Could not find requested library: " + libFileName)
+	return false
+end function
+
+loadMetaXPloit = function()
+	return loadLibrary("metaxploit.so", true)
+end function
+
+loadTarget = function()
+	metaxploit = loadMetaXPloit()
+	if not metaxploit then return false
+	port = getParam("-p")
+	addr = getParam("-a")
+	file = getParam("-f")
+	if addr then
+		if port then 
+			info("Exploiting " + addr + ":" + port)
+			netsession = metaxploit.net_use(addr, port.to_int)
+		else 
+			info("Exploiting router at " + addr)
+			netsession = metaxploit.net_use(addr)
+		end if
+		if not netsession then 
+			error("Could not connect to network address provided.")
+			return false
+		end if
+		info("Net session established.")
+		metalib = netsession.dump_lib
+		if not metalib then
+			error("Could not extract library from network session.")
+			return false
+		end if
+		info("Extracted " + metalib.lib_name + " ver. " + metalib.version)
+		return metalib	
+	end if
+	if file then 
+		metalib = metaxploit.load(file)
+		if not metalib then
+			info("Could not build meta library from provided file.")
+			return false
+		end if
+		return metalib
+	end if
+	error("Improper parameters provided (need -p, -a, or -f)")
+	return false
+end function
+
+getMetaLibInfo = function(metaLib)
+	return metaLib.lib_name + ", ver. " + metaLib.version
+end function
+
+scanTarget = function(target)
+	metaxploit = loadMetaXPloit()
+	info("Starting scan on " +getMetaLibInfo(target))
+	addresses = metaxploit.scan(target)
+	info("Found " + addresses.len + " memory addresses.")
+	for address in addresses
+		print("Exploit found @ " + address)
+		result = metaxploit.scan_address(target, address)
+		print(result)
+	end for 
+end function
+
+loadExploits = function(libraryFile)
+	exploitLibFile = get_shell.host_computer.File(libraryFile)
+	if not exploitLibFile then 
+		error("Could not find exploit library.")
+		return false
+	end if
+	rValue = []
+	newKey = false
+	lines = exploitLibFile.content.split("\n")
+	for line in lines
+		if line.len == 0 then continue
+		if line[0] == "#" then continue
+		colsUntrimmed = line.split("::")
+		cols = []
+		for col in colsUntrimmed
+			cols.push(col.trim)
+		end for
+		if cols[0] == "exploit" then
+			if newKey then rValue.push(newKey)
+			newKey = {"libname": cols[1], "version": cols[2]}
+		else if cols.len > 1 then 
+			newKey.push(cols[0])
+			if cols[0] == "parameters" then 
+				newKey[cols[0]] = cols[1:]
+			else
+				newKey[cols[0]] = cols[1]
+			end if
+		end if
+	end for
+	rValue.push(newKey)
+	return rValue
+end function
+
+dumpFileObj = function(file)
+	if file.has_permission("r") and not file.is_binary then
+		print("FILE CONTENTS: " + file.name)
+		print(file.content)
+	end if
+end function
+
+hackFileObj = function(fileObj)
+	if fileObj.is_folder then
+		print("Dumping files in " + fileObj.path + " folder")
+		files = fileObj.get_files
+		for file in files
+			dumpFileObj(file)
+		end for
+	end if
+end function
+
+scanFiles = function(dirPtr)
+	info("Running password scan...")
+	while not dirPtr.parent == null 
+		dirPtr = dirPtr.parent
+	end while
+	while 1
+		info("Looping...")
+		directories = dirPtr.get_folders
+		files = dirPtr.get_files
+		print("Contents: ")
+		c = 0
+		for directory in directories
+			c = c + 1
+			print(c + " - DIR : " + directory.name)
+		end for
+		cf = c
+		for file in files
+			c = c + 1
+			print(c + " - FILE:" + file.name)
+		end for
+		ce = c
+		print("Choose Q to quit, U to go back up a directory")
+		while 1
+			userChoice = user_input("Choice? >")
+			if userChoice.upper == "Q" then break
+			if userChoice.upper == "U" then
+				info("Going up one directory")
+				if not dirPtr.parent == null then 
+					dirPtr = dirPtr.parent
+				else
+					print("Can't go any higher.")
+				end if
+				break
+			end if
+			userChoice = userChoice.to_int
+			if userChoice <= ce and userChoice > 0 then break
+		end while
+		info("User has chosen: " + userChoice)
+		if typeof(userChoice) == "string" and userChoice.upper == "Q" then break
+		if typeof(userChoice) == "string" then continue
+		if userChoice <= cf then 
+			dirPtr = directories[userChoice-1]
+			info("Changing directories.")
+		else
+			print("Contents of " + files[userChoice-1].name)
+			print("---------------------------")
+			print(files[userChoice-1].content)
+		end if
+	end while
+end function
+
+exploit = function(target)
+	info("Exploiting " +getMetaLibInfo(target))
+	exploits = loadExploits(getExploitLibFileName())
+	libName = target.lib_name
+	libVer = target.version
+	validExploits=[]
+	for exploit in exploits
+		if exploit.libname == libName and exploit.version == libVer then validExploits.push(exploit)
+	end for 
+	info("Found " + validExploits.len + " exploits.")
+	c = 1
+	for validExploit in validExploits
+		if validExploit.hasIndex("name") then 
+			print("<b>" + c + ". " + validExploit.name + "</b>")
+		else
+			print("<b>" + c + ". NAME NOT PROVIDED </b>")
+		end if
+		if validExploit.hasIndex("requirements") then print("<i>" + validExploit.requirements.replace("\n", "</i>\n<i>") + "</i>")
+		c = c + 1
+	end for
+	chosenExploit = validExploits[user_input("Choose your exploit: ").to_int-1]
+	numParameters = 0
+	if chosenExploit.hasIndex("parameters") then numParameters = chosenExploit.parameters.len
+	info("Need " + numParameters + " parameters.")
+	if numParameters == 0 then
+		result = target.overflow(chosenExploit.memory, chosenExploit.string)
+	else if numParameters == 1 then
+		result = target.overflow(chosenExploit.memory, chosenExploit.string, user_input(chosenExploit["parameters"][0] + " >"))
+	end if
+	info("Hack resulted in a " + typeof(result) + " object.")
+	if typeof(result) == "computer" then hackComputer(result)
+	if typeof(result) == "file" then scanFiles(result)
+	if typeof(result) == "shell" then result.start_terminal
+	// To do: Handle FTP object.
+end function
+
+hackComputer = function(computer)
+	// Hack a computer
+	// TO DO: Give the user options to inject or remove new users if root access is found.
+	while 1
+		print("You have PC access.  What would you like to do?")
+		print("1. Browse Files")
+		print("2. Add Users")
+		print("3. Delete Users")
+		print("Q - Quit")
+		choice = user_input("Choice? >")
+		if choice.upper == "Q" then break
+		choice = choice.to_int
+		if choice < 1 or choice > 3 then continue
+		if choice == 1 then
+			scanFiles(computer.File("/"))
+		else if choice == 2 then
+			username = user_input("User Name? >")
+			password = user_input("Password? > ")
+			print(computer.create_user(username, password))
+		else if choice == 3 then
+			print("Current users: ")
+			homeDirs = computer.File("/home").get_folders
+			for homeDir in homeDirs
+				print(homeDir.name)
+			end for
+			userToDelete = user_input("Username to delete? >")
+			deleteHomeDir = user_input("Delete home diresctory? >")
+			if deleteHomeDir.upper == "Y" or deleteHomeDir.upper == "YES" then
+				deleteHomeDir = true
+			else
+				deleteHomeDir = false
+			end if
+			print(computer.delete_user(userToDelete, deleteHomeDir))
+		end if
+end function
+
+// If we're running a scan
+info("Using: " + LIBRARY_FILE)
+if isAParam("scan") then 
+	// Run a scan
+	info("Loading target...")
+	targetLib = loadTarget()
+	if not targetLib then exit()
+	info("Scanning target...")
+	scanTarget(targetLib)
+	exit()
+else if isAParam("exploit") then
+	exploit(loadTarget())
+else if isAParam("version") then
+	print(getMetaLibInfo(loadTarget()))
+else if isAParam("help") or isAParam("?") then 
+	displayHelp()
+else
+	print("Please provide a function: scan|exploit|version|help")
+end if
+
