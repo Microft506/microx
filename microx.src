@@ -1,3 +1,5 @@
+// To do: Fix Git
+
 LIBRARY_FILE = "/home/" + active_user + "/exploitLib.txt"
 
 displayHelp = function()
@@ -112,6 +114,78 @@ scanTarget = function(target)
 		result = metaxploit.scan_address(target, address)
 		print(result)
 	end for 
+	
+	yesno = user_input("Would you like to add this to your library? ").upper
+	if yesno.len > 0 and yesno.upper[0]=="Y" then
+		yesno = true
+	else
+		yesno = false
+	end if
+	if not yesno then return
+	
+	print("Updating library...")
+	 
+	// Test for file export.
+	expList = []
+	expMap = false
+	requirements = false
+	for address in addresses
+		exploits = metaxploit.scan_address(target, address)
+		lines = exploits.split("\n")
+		for line in lines
+			info("Analyzing: " + line)
+			if line.len == 0 then continue
+			if line.indexOf("Unsafe check") == 0 then
+				if expMap then 
+					if requirements then 
+						expMap.push("requirements")
+						expMap["requirements"] = requirements
+						info("Adding requirements to object")
+					end if
+					expList.push(expMap)
+					info("pushing object: " + expMap)
+				end if
+				startPos = line.indexOf("<b>")+3
+				endPos = line.indexOf("</b>")
+				info("Creating new object with keystring: " + line[startPos:endPos])
+				expMap = {"exploit":target.lib_name + "::" + target.version, "name":"Unknown", "string":line[startPos:endPos], "memory":address}
+				requirements = false
+			else if line[0] == "*" then
+				if requirements then 
+					requirements = requirements + "::" + line
+					info("Updated requirements: " + requirements)
+				else
+					info("New requirements set: " + line)
+					requirements = line
+				end if
+			end if
+		end for
+	end for
+	if expMap then 
+		if requirements then 
+			expMap.push("requirements")
+			expMap["requirements"] = requirements
+			info("Adding requirements to object")
+		end if
+		expList.push(expMap)
+		info("pushing object: " + expMap)
+	end if
+	
+	libFile = get_shell.host_computer.File(getExploitLibFileName())
+	
+	newEntries = "\n# ------- ADDED BY MICROX -------\n\n"
+	for exp in expList
+		newEntries = newEntries + "exploit::" + exp.exploit+"\n"
+		newEntries = newEntries + "     name::" + exp.name+"\n"
+		newEntries = newEntries + "     memory::" + exp.memory+"\n"
+		newEntries = newEntries + "     string::" + exp.string+"\n"
+		if exp.hasIndex("requirements") then newEntries = newEntries + "     requirements::"+exp.requirements+"\n"
+		newEntries = newEntries + "\n"
+	end for
+	
+	libFile.set_content(libFile.content + newEntries)
+	print("library updated.")
+	
 end function
 
 loadExploits = function(libraryFile)
@@ -136,7 +210,7 @@ loadExploits = function(libraryFile)
 			newKey = {"libname": cols[1], "version": cols[2]}
 		else if cols.len > 1 then 
 			newKey.push(cols[0])
-			if cols[0] == "parameters" then 
+			if cols[0] == "parameters" or cols[0] == "requirements" then 
 				newKey[cols[0]] = cols[1:]
 			else
 				newKey[cols[0]] = cols[1]
@@ -232,7 +306,11 @@ exploit = function(target)
 		else
 			print("<b>" + c + ". NAME NOT PROVIDED </b>")
 		end if
-		if validExploit.hasIndex("requirements") then print("<i>" + validExploit.requirements.replace("\n", "</i>\n<i>") + "</i>")
+		if validExploit.hasIndex("requirements") then 
+			for requirement in validExploit.requirements
+				print(requirement)
+			end for
+		end if
 		c = c + 1
 	end for
 	chosenExploit = validExploits[user_input("Choose your exploit: ").to_int-1]
@@ -288,7 +366,7 @@ hackComputer = function(computer)
 end function
 
 // If we're running a scan
-info("Using: " + LIBRARY_FILE)
+info("Using: " + getExploitLibFileName())
 if isAParam("scan") then 
 	// Run a scan
 	info("Loading target...")
