@@ -43,7 +43,7 @@ info = function(str)
 end function
 
 error = function(str)
-	print("  ERROR: " + str)
+	print("<color=#FF2222><b>  ERROR: </b></color>" + str)
 end function
 
 loadLibrary = function(libFileName, search)
@@ -199,7 +199,10 @@ loadExploits = function(libraryFile)
 	lines = exploitLibFile.content.split("\n")
 	for line in lines
 		if line.len == 0 then continue
-		if line[0] == "#" then continue
+		if line[0] == "#" then 
+			newKey = {"comment":line}
+			continue
+		end if
 		colsUntrimmed = line.split("::")
 		cols = []
 		for col in colsUntrimmed
@@ -219,6 +222,104 @@ loadExploits = function(libraryFile)
 	end for
 	rValue.push(newKey)
 	return rValue
+end function
+
+writeExploits = function(exploits, filename)
+	file = get_shell.host_computer.File(filename)
+	outputString = ""
+	if not file then 
+		error("Could not open " + filename + " for output.")
+		return false
+	end if
+	for exploit in exploits
+		if exploit.hasIndex("libname") and exploit.hasIndex("version") then outputString = outputString + "libname::" + exploit.libname + "::" + exploit.version + "\n"
+		for key in exploit.indexes
+			if key == "version" or key == "libname" then continue
+			if key == "comment" then 
+				outputString = outputString + exploit[key] + "\n"
+				continue
+			end if
+			if key == "name" or key == "memory" then outputString = outputString + "     "
+			if key == "string" or key == "requirements" then outputString = outputString + "     "
+			if key == "parameters" then outputString = outputString + "     "
+			outputString = outputString + key
+			value = exploit[key]
+			if typeof(value) == "string" then
+				outputString = outputString + "::" + value
+			else if typeof(value) == "list" then
+				for val in value
+					outputString = outputString + "::" + val
+				end for
+			else
+				error("writeExploits: Don't know what to do with type: " + typeof(value))
+				return false
+			end if
+			outputString = outputString + "\n"
+		end for
+	end for
+	file.set_content(outputString)
+end function
+
+changeExploitType = function(exploits, library, version, memory, string, newType)
+	if newType == "" then
+		print("Please choose the type of exploit this is to be:")
+		print("[1] <b>System Access</b> Any exploit that returns a computer object.")
+		print("[2] <b>File Access</b> Any exploit that returns a file object.")
+		print("[3] <b>Password Change</b> Let's you change a user's password.")
+		print("[4] <b>Change Root Password</b> Let's your change the root password.")
+		print("[5] <b>Guest Shell</b> Grants access to a guest shell.")
+		userChoice = user_input("? :").to_int
+		if not typeof(userChoice) == "number" or userChoice > 5 or userChoice < 1 then
+			error("changeExploitType: Not a valid choice.")
+			return false
+		end if
+		if userChoice == 1 then newType = "system"
+		if userChoice == 2 then newType = "file"
+		if userChoice == 3 then newType = "userPassword"
+		if userChoice == 4 then newType = "rootPassword"
+		if userChoice == 5 then newType = "guestShell"
+	end if
+	
+	newMap = {}
+	
+	if newType.lower == "system" then 
+		newMap = {"name": "System Access"}
+	else if newType.lower == "file" then
+		newMap = {"name": "File Access"}
+	else if newType.lower == "userpassword" then
+		newMap = {"name": "Change User Password", "parameters": "New User Password"}
+	else if newType.lower == "rootpassword" then
+		newMap = {"name": "Change Root Password", "parameters": "New Root Password"}
+	else if newType.lower == "guestshell" then
+		newMap = {"name": "Guest Shell"}
+	else if newType.lower == "router" then
+		newMap = {"name": "Router Access", "parameters":"Local IP Address"}
+	else
+		error("changeExploitType: Invalid type - " + newType)
+		return false
+	end if
+
+	for exploit in exploits
+		if not exploit.hasIndex("libname") then continue
+		if not exploit.libname == library then continue
+		if not exploit.hasIndex("version") then continue
+		if not exploit.version == version then continue
+		if not exploit.hasIndex("memory") then continue
+		if not exploit.memory == memory then continue
+		if not exploit.hasIndex("string") then continue
+		if not exploit.string == string then continue
+		
+		if exploit.libname == library and exploit.version == version and exploit.memory == memory and exploit.string == string then
+			exploit.name = newMap.name
+			if exploit.hasIndex("parameters") then exploit.remove("parameters")
+			if newMap.hasIndex("parameters") then
+				exploit.push("parameters")
+				exploit.parameters = newMap.parameters
+			end if
+		end if
+	end for
+	
+	return exploits
 end function
 
 dumpFileObj = function(file)
@@ -294,11 +395,16 @@ exploit = function(target)
 	exploits = loadExploits(getExploitLibFileName())
 	libName = target.lib_name
 	libVer = target.version
+	
 	validExploits=[]
 	for exploit in exploits
-		if exploit.libname == libName and exploit.version == libVer then validExploits.push(exploit)
+		if exploit.hasIndex("libname") and exploit.hasIndex("version") then 
+			if exploit.libname == libName and exploit.version == libVer then validExploits.push(exploit)
+		end if
 	end for 
+	
 	info("Found " + validExploits.len + " exploits.")
+	
 	c = 1
 	for validExploit in validExploits
 		if validExploit.hasIndex("name") then 
@@ -313,7 +419,35 @@ exploit = function(target)
 		end if
 		c = c + 1
 	end for
-	chosenExploit = validExploits[user_input("Choose your exploit: ").to_int-1]
+	
+	chosenExploit = user_input("\nChoose your exploit (c to change an exploit type): ")
+	if chosenExploit.lower == "c" then 
+		chosenExploit = user_input("Which exploit would you like to change? :").to_int
+		if not typeof(chosenExploit) == "number" or chosenExploit < 1 or chosenExploit > c then 
+			error("exploit: not a valid choice")
+			return
+		end if
+		print("You have chosen <b>" + validExploits[chosenExploit-1].name + "</b> at memory address <b>" + validExploits[chosenExploit-1] + "</b>")
+		newExploits = changeExploitType(exploits, validExploits[chosenExploit-1].libname, validExploits[chosenExploit-1].version, validExploits[chosenExploit-1].memory, validExploits[chosenExploit-1].string, "")
+		if not newExploits then 
+			error("exploit: Something went wrong tyring to change the exploit type")
+			return
+		end if
+		
+		writeExploits(newExploits, getExploitLibFileName())
+		
+		info("Exploits written out successfully")
+		
+		return
+	end if
+	
+	chosenExploit = chosenExploit.to_int
+	if not typeof(chosenExploit) == "number" then
+		error("exploit: not a valid choice")
+		return
+	end if
+	chosenExploit = validExploits[chosenExploit-1]
+	
 	numParameters = 0
 	if chosenExploit.hasIndex("parameters") then numParameters = chosenExploit.parameters.len
 	info("Need " + numParameters + " parameters.")
@@ -323,9 +457,47 @@ exploit = function(target)
 		result = target.overflow(chosenExploit.memory, chosenExploit.string, user_input(chosenExploit["parameters"][0] + " >"))
 	end if
 	info("Hack resulted in a " + typeof(result) + " object.")
-	if typeof(result) == "computer" then hackComputer(result)
-	if typeof(result) == "file" then scanFiles(result)
-	if typeof(result) == "shell" then result.start_terminal
+	
+	if typeof(result) == "computer" then 
+		print("\n<b>-- SYSTEM ACCESS GRANGED</b>\n")
+		if chosenExploit.name.trim.lower == "unknown" then
+			newExploits = changeExploitType(exploits, chosenExploit.name, chosenExploit.version, chosenExploit.memory, chosenExploit.string, "system")
+			if newExploits then
+				newExploits = writeExploit(newExploits, getExploitLibFileName())
+				info("Successfully updated library for newly identified exploit.")
+			end if
+			if not newExploits then error("exploit: Could not write out the new exploit type to disk")
+		end if
+		hackComputer(result)
+		
+	else if typeof(result) == "file" then 
+		print("\n<b>-- FILE SYSTEM ACCESS GRANGED</b>\n")
+		if chosenExploit.name.trim.lower == "unknown" then
+			newExploits = changeExploitType(exploits, chosenExploit.name, chosenExploit.version, chosenExploit.memory, chosenExploit.string, "file")
+			if newExploits then
+				newExploits = writeExploit(newExploits, getExploitLibFileName())
+				info("Successfully updated library for newly identified exploit.")
+			end if
+			if not newExploits then error("exploit: Could not write out the new exploit type to disk")
+		end if
+		scanFiles(result)
+		
+	else if typeof(result) == "shell" then 
+		print("\n<b>-- SHELL ACCESS GRANGED</b>\n")
+		if chosenExploit.name.trim.lower == "unknown" then
+			newExploits = changeExploitType(exploits, chosenExploit.name, chosenExploit.version, chosenExploit.memory, chosenExploit.string, "guestShell")
+			if newExploits then
+				newExploits = writeExploit(newExploits, getExploitLibFileName())
+				info("Successfully updated library for newly identified exploit.")
+			end if
+			if not newExploits then error("exploit: Could not write out the new exploit type to disk")
+		end if
+		result.start_terminal
+	
+	else
+		print("Can't handle this type of object.")
+		user_input("Hit any key to continue...")
+	end if
 	// To do: Handle FTP object.
 end function
 
@@ -337,11 +509,12 @@ hackComputer = function(computer)
 		print("1. Browse Files")
 		print("2. Add Users")
 		print("3. Delete Users")
+		print("4. Change a password")
 		print("Q - Quit")
 		choice = user_input("Choice? >")
 		if choice.upper == "Q" then break
 		choice = choice.to_int
-		if choice < 1 or choice > 3 then continue
+		if choice < 1 or choice > 4 then continue
 		if choice == 1 then
 			scanFiles(computer.File("/"))
 		else if choice == 2 then
@@ -362,11 +535,18 @@ hackComputer = function(computer)
 				deleteHomeDir = false
 			end if
 			print(computer.delete_user(userToDelete, deleteHomeDir))
+		else if choice == 4 then 
+			username = user_input("Username for password change? >")
+			password = user_input("New Password? >")
+			print(computer.change_password(username, password))
 		end if
 end function
 
 // If we're running a scan
 info("Using: " + getExploitLibFileName())
+
+while 1
+
 if isAParam("scan") then 
 	// Run a scan
 	info("Loading target...")
@@ -381,7 +561,10 @@ else if isAParam("version") then
 	print(getMetaLibInfo(loadTarget()))
 else if isAParam("help") or isAParam("?") then 
 	displayHelp()
+else if isAParam("test") then
+	writeExploits(loadExploits(getExploitLibFileName()), "/home/Micro/test.txt")
 else
 	print("Please provide a function: scan|exploit|version|help")
 end if
 
+end while
