@@ -93,9 +93,9 @@ extractMetaLibs = function(router)
 	
 	if routerLib then 
 		if typeof(router) == "router" then
-			returnValue.push({"local_ip": router.public_ip + "/" + router.local_ip, "port_number":-1, "metaLib":routerLib})
+			returnValue.push({"public_ip": router.public_ip, "local_ip": router.local_ip, "port_number":-1, "metaLib":routerLib})
 		else
-			returnValue.push({"local_ip": get_router().public_ip + "/" + get_router().local_ip, "port_number":-1, "metaLib":routerLib})
+			returnValue.push({"public_ip": get_router().public_ip, "local_ip": router.local_ip, "port_number":-1, "metaLib":routerLib})
 		end if
 	else
 		error("Could not map exploit library to router at: " + router.public_ip)
@@ -113,7 +113,11 @@ extractMetaLibs = function(router)
 		if not metalib then	
 			error("Could not map exploit to public port at: " + router.public_ip + ":" + port.port_number)
 		else
-			returnValue.push({"local_ip": port.get_lan_ip, "port_number":port.port_number, "metaLib":metalib})
+			if typeof(router) == "router" then
+				returnValue.push({"public_ip": router.public_ip,"local_ip": port.get_lan_ip, "port_number":port.port_number, "metaLib":metalib})
+			else
+				returnValue.push({"public_ip": get_router().public_ip,"local_ip": port.get_lan_ip, "port_number":port.port_number, "metaLib":metalib})
+			end if
 		end if
 	end for
 	
@@ -432,7 +436,8 @@ get_choice = function(choices, default = -1)
 	end while
 end function
 
-get_yesno = function(default)
+get_yesno = function(default, prompt = "")
+	if prompt.len > 0 then print("<b>"+prompt+"</b>")
 	if default then
 		prompt = "[Enter = Yes] > "
 	else
@@ -659,7 +664,7 @@ messWithUsers = function(computer)
 		result = computer.create_user(un,pw)
 	else if choice == 2 then
 		un = user_input("User to delete? >")
-		delHome = get_yesno("Delete home directory?")
+		delHome = get_yesno(false,"Delete home directory?")
 		result = computer.delete_user(un, delHome)
 	else
 		return
@@ -669,6 +674,44 @@ messWithUsers = function(computer)
 	else
 		error(result)
 	end if
+end function
+
+crackPasswordFile = function(filePtr, hostInfo="")
+	crypto = loadLibrary("crypto.so", true)
+	lines = filePtr.content.split("\n")
+	for line in lines
+		results = []
+		line = split(line.trim, ":")
+		if line.len == 2 and line[1].len == 32 then
+			print("Cracking MD5 hash for user: <b><i>" + line[0] + "</b></i> in file: <b><i>" + filePtr.path + "/" + filePtr.name + "</b></i>")
+			pw = crypto.decipher(line[0], line[1])
+			if pw then
+				print("Password: ["+pw+"]")
+				get_shell().host_computer.touch(home_dir, "crackedPasswords.txt")
+				f = get_shell().host_computer.File(home_dir+"/crackedPasswords.txt")
+				f.set_content(f.content + "\n" + padSpaces(line[0]+"@"+pw, 30) + " " + hostInfo + ": " + filePtr.name)
+			end if
+		end if
+	end for
+	
+end function
+
+crackAllFiles = function(filePtr, hostInfo="")
+	subDirs = filePtr.get_folders
+	files = filePtr.get_files
+	for file in files
+		if file.has_permission("r") and not file.is_binary then crackPasswordFile(file, hostInfo)
+	end for
+	for dir in subDirs
+		crackAllFiles(dir, hostInfo)
+	end for
+end function
+
+crackAllFilesFromTop = function(filePtr, hostInfo="")
+	while filePtr.parent
+		filePtr = filePtr.parent
+	end while
+	crackAllFiles(dir, hostInfo)
 end function
 
 browseFiles = function(dirPtr, hostInfo = "")
@@ -752,8 +795,7 @@ browseFiles = function(dirPtr, hostInfo = "")
 					error(x)
 				end if
 			else if choiceb == 4 then
-				print("\n<b>Are you sure you want to delete this file?")
-				if get_yesno(false) then 
+				if get_yesno(false, "Are you sure you want to delete this file?") then 
 					x = filePtr.delete
 					if x == "" then
 						print(" .. File deleted successfully.")
@@ -762,31 +804,16 @@ browseFiles = function(dirPtr, hostInfo = "")
 					end if
 				end if
 			else if choiceb == 5 then
-				crypto = loadLibrary("crypto.so", true)
-				if not crypto then continue
 				if not filePtr.content then
 					error("Could not read the contents of this file - Check permissions and file type.")
 					continue
 				else 
 					print("Scanning contents...")
-					lines = filePtr.content.split("\n")
-					for line in lines
-						results = []
-						line = split(line.trim, ":")
-						if line.len == 2 and line[1].len == 32 then
-							print("Cracking MD5 hash for user: <b><i>" + line[0] + "</b></i>")
-							pw = crypto.decipher(line[0], line[1])
-							if pw then
-								print("Password: ["+pw+"]")
-								get_shell().host_computer.touch(home_dir, "crackedPasswords.txt")
-								f = get_shell().host_computer.File(home_dir+"/crackedPasswords.txt")
-								f.set_content(f.content + "\n" + padSpaces(line[0]+"@"+pw, 20) + " " + hostInfo + ": " + filePtr.name)
-							end if
-						end if
-					end for
+					crackPasswordFile(filePtr)
 					print("Cracked passwords have been saved in <b><i>" + home_dir + "/crackedPasswords.txt</b></i>")
 				end if
 			end if
+		
 		end if
 	end while
 end function
@@ -812,7 +839,6 @@ print("<color=#3344DD><b>| |\/| |  | | / _|  | '_| / _ \  >  < </b></color>")
 print("<color=#1111FF><b>|_|  |_|  |_| \__|  |_|   \___/ /_/\_\</b></color>")
 print("                                <i>Version <b>" + microx_version + "</b></i>")
 print()
-
 
 if not ipAddr then exit("<B>Usage: microx (optional -v) <IP Address></B>")
 
@@ -864,8 +890,7 @@ while 1
 		exploitObj = runExploit(exploit, metaLib.metaLib)
 		
 		if typeof(exploitObj) == "shell" or typeof(exploitObj) == "ftpshell" then
-			print("<b>This can alert the admin.  Are you sure you want to open it now?</b>")
-			result = get_yesno(false)
+			result = get_yesno(false, typeof(exploitObj) + ": This can alert the admin.  Are you sure you want to open it now?")
 			if result then
 				get_shell.launch("LogViewer.exe")
 				exploitObj.start_terminal
@@ -877,9 +902,10 @@ while 1
 				choices.push("Create a file on the computer.")
 				choices.push("Mess with users")
 				choices.push("Mess with processes")
+				choices.push("Scan entire machine for passwords (and crack them)")
 				choices.push("Nothing.")
 				choice = get_choice(choices, choices.len-1)
-				if choice == 5 then break
+				if choice == choices.len-1 then break
 				if choice == 1 then
 					browseFiles(exploitObj.File("/"), router.public_ip + "->" + exploitObj.lan_ip)
 				else if choice == 2 then
@@ -895,10 +921,24 @@ while 1
 					messWithUsers(exploitObj)
 				else if choice == 4 then
 					messWithProcs(exploitObj)
+				else if choice == 5 then
+					crackAllFiles(exploitObj.File("/"), metaLib.public_ip + " --> " + metaLib.local_ip)
+					print("Cracked passwords have been saved in <b><i>" + home_dir + "/crackedPasswords.txt</b></i>")
 				end if
 			end while
 		else if typeof(exploitObj) == "file" then
-			browseFiles(exploitObj)
+			choices = ["\n\n<b>You have unlocked file access.  You can:</b>"]
+			choices.push("Browse Files")
+			choices.push("Scan entire machine for passwords (and crack them)")
+			choices.push("Nothing.")
+			choice = get_choice(choices, choices.len-1)
+			if choice == choices.len-1 then break
+			if choice == 1 then
+				browseFiles(exploitObj)
+			else if choice == 2 then
+				crackAllFiles(exploitObj, metaLib.public_ip + " --> " + metaLib.local_ip)
+				print("Cracked passwords have been saved in <b><i>" + home_dir + "/crackedPasswords.txt</b></i>")
+			end if
 		end if
 	end while
 end while
