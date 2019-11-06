@@ -653,7 +653,7 @@ messWithUsers = function(computer)
 	choices.push("Forget it.")
 	choice = get_choice(choices, choices.len-1)
 	result = null
-	if choics == 1 then
+	if choice == 1 then
 		un = user_input("New user name? > ")
 		pw = user_input("Password? > ")
 		result = computer.create_user(un,pw)
