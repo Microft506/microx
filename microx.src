@@ -1,4 +1,4 @@
-microx_version = "2.0"
+microx_version = "2.1"
 
 getParam = function(paramType)
 	rnp=0
@@ -646,6 +646,31 @@ messWithProcs = function(computer)
 	end while 
 end function
 
+messWithUsers = function(computer)
+	choices = ["\n<b>What would you like to do?</b>"]
+	choices.push("Add a user.")
+	choices.push("Delete a user.")
+	choices.push("Forget it.")
+	choice = get_choice(choices, choices.len-1)
+	result = null
+	if choics == 1 then
+		un = user_input("New user name? > ")
+		pw = user_input("Password? > ")
+		result = computer.create_user(un,pw)
+	else if choice == 2 then
+		un = user_input("User to delete? >")
+		delHome = get_yesno("Delete home directory?")
+		result = computer.delete_user(un, delHome)
+	else
+		return
+	end if
+	if result == 1 then
+		print("<b>SUCCESS!</b>")
+	else
+		error(result)
+	end if
+end function
+
 browseFiles = function(dirPtr, hostInfo = "")
 	while not dirPtr.parent == null 
 		dirPtr = dirPtr.parent
@@ -838,8 +863,13 @@ while 1
 
 		exploitObj = runExploit(exploit, metaLib.metaLib)
 		
-		if typeof(exploitObj) == "shell" then
-			error("Shell access not yet implemented")
+		if typeof(exploitObj) == "shell" or typeof(exploitObj) == "ftpshell" then
+			print("<b>This can alert the admin.  Are you sure you want to open it now?</b>")
+			result = get_yesno(false)
+			if result then
+				get_shell.launch("LogViewer.exe")
+				exploitObj.start_terminal
+			end if
 		else if typeof(exploitObj) == "computer" then
 			while 1
 				choices = ["\n\n<b>You have unlocked a computer object.  You can:</b>"]
@@ -862,7 +892,7 @@ while 1
 						error(x)
 					end if
 				else if choice == 3 then 
-					error("Not yet implemented")
+					messWithUsers(exploitObj)
 				else if choice == 4 then
 					messWithProcs(exploitObj)
 				end if
@@ -870,7 +900,5 @@ while 1
 		else if typeof(exploitObj) == "file" then
 			browseFiles(exploitObj)
 		end if
-		
-		
 	end while
 end while
