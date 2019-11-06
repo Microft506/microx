@@ -1,4 +1,4 @@
-microx_version = "2.1"
+microx_version = "2.2"
 
 getParam = function(paramType)
 	rnp=0
