@@ -1,0 +1,51 @@
+getColorString = function(fileObj)
+	if fileObj.has_permission("r") and fileObj.has_permission("w") then return("88FFFF")
+	if fileObj.has_permission("r") then return("8888FF")
+	if fileObj.has_permission("w") then return("88FF88")
+	return("FF8888")
+end function
+
+padSpaces = function(s, l, p=" ")
+	if typeof(s) == "number" then s = s + ""
+	if s.len >= l then return s
+	padString = ""
+	c = l - s.len
+	while c > 0
+		padString = padString + p
+		c = c - 1
+	end while
+	return (s+padString)
+end function
+
+padSpacesRight = function(s, l, p=" ")
+	if typeof(s) == "number" then s = s + ""
+	if s.len >= l then return s
+	padString = ""
+	c = l - s.len
+	while c > 0
+		padString = p + padString
+		c = c - 1
+	end while
+	return (padString+s)
+end function
+
+curDir = get_shell.host_computer.File(get_shell.host_computer.current_path)
+
+directories = curDir.get_folders
+files = curDir.get_files
+
+lines=[]
+
+for directory in directories			
+	lines.push("<color=#"+getColorString(directory)+">" + directory.permissions + " " + padSpacesRight(directory.owner, 8, " ") + " " + padSpaces(directory.group, 8, " ") + " ./" + padSpaces(directory.name, 19, ".") +"<dir></color>")
+end for
+
+for file in files
+	binString = "<binary>"
+	if not file.is_binary then binString = "<text>"
+	lines.push("<color=#"+getColorString(file)+">" + file.permissions + " " + padSpacesRight(file.owner, 8, " ") + " " + padSpaces(file.group, 8, " ") + " " + padSpaces(file.name, 20, ".") + "." + padSpaces(binString, 9) + file.size + " bytes</color>")
+end for
+
+for line in lines
+	print(line)
+end for

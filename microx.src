@@ -1,4 +1,4 @@
-microx_version = "2.2"
+microx_version = "2.2.1"
 
 getParam = function(paramType)
 	rnp=0
@@ -71,7 +71,7 @@ padSpacesRight = function(s, l, p=" ")
 		padString = p + padString
 		c = c - 1
 	end while
-	return (s+padString)
+	return (padString+s)
 end function
 
 extractMetaLibs = function(router)
@@ -95,7 +95,7 @@ extractMetaLibs = function(router)
 		if typeof(router) == "router" then
 			returnValue.push({"public_ip": router.public_ip, "local_ip": router.local_ip, "port_number":-1, "metaLib":routerLib})
 		else
-			returnValue.push({"public_ip": get_router().public_ip, "local_ip": router.local_ip, "port_number":-1, "metaLib":routerLib})
+			returnValue.push({"public_ip": get_router().public_ip, "local_ip": router, "port_number":-1, "metaLib":routerLib})
 		end if
 	else
 		error("Could not map exploit library to router at: " + router.public_ip)
@@ -168,6 +168,7 @@ loadExploits = function(metaLib)
 		end if
 	end for
 	if newKey then rValue.push(newKey)
+	
 	return rValue
 end function
 
@@ -683,7 +684,7 @@ crackPasswordFile = function(filePtr, hostInfo="")
 		results = []
 		line = split(line.trim, ":")
 		if line.len == 2 and line[1].len == 32 then
-			print("Cracking MD5 hash for user: <b><i>" + line[0] + "</b></i> in file: <b><i>" + filePtr.path + "/" + filePtr.name + "</b></i>")
+			print("Cracking MD5 hash for user: <b><i>" + line[0] + "</b></i> in file: <b><i>" + filePtr.path + "</b></i>")
 			pw = crypto.decipher(line[0], line[1])
 			if pw then
 				print("Password: ["+pw+"]")
@@ -693,7 +694,6 @@ crackPasswordFile = function(filePtr, hostInfo="")
 			end if
 		end if
 	end for
-	
 end function
 
 crackAllFiles = function(filePtr, hostInfo="")
@@ -714,26 +714,74 @@ crackAllFilesFromTop = function(filePtr, hostInfo="")
 	crackAllFiles(dir, hostInfo)
 end function
 
+unlockAllFiles = function(filePtr)
+	subDirs = filePtr.get_folders
+	files = filePtr.get_files
+	for file in files
+		file.chmod("o+rwx")
+	end for
+	for directory in subDirs
+		directory.chmod("o+rwx")
+		unlockAllFiles(directory)
+	end for
+end function
+
+findUnlockedRWString = function(readPerm, writePerm)
+	if readPerm and writePerm then
+		return "read and write"
+	else if readPerm then
+		return "read"
+	else if writePerm then
+		return "write"
+	else
+		return "no"
+	end if
+end function
+
+findUnlocked = function(dirPtr)
+	directories = dirPtr.get_folders
+	files = dirPtr.get_files
+	if dirPtr.has_permission("w") then print("Directory at <b>" + dirPtr.path +"</b> has write permission.")
+	if files.len > 0 then
+		for file in files
+			if not findUnlockedRWString(file.has_permission("r"), file.has_permission("w"))=="no" then
+				print("File at <b>" + file.path + "</b> has " + findUnlockedRWString(file.has_permission("r"), file.has_permission("w")) + " permissions.")
+			end if
+		end if
+	end if
+	if directories.len > 0 then
+		for directory in directories
+			findUnlocked(directory)
+		end for
+	end if
+end function
+
 browseFiles = function(dirPtr, hostInfo = "")
 	while not dirPtr.parent == null 
 		dirPtr = dirPtr.parent
 	end while
+	rootPtr = dirPtr
 	while 1
 		directories = dirPtr.get_folders
 		files = dirPtr.get_files
-		choices = ["\n\n<b>Contents of " + dirPtr.path + ":</b>"]
+		choices = ["\n\n<b>Contents of " + dirPtr.path + ":</b>\n     <color=#" + getColorString(dirPtr) + ">" + dirPtr.permissions + padSpaces("", 19) + "<.>" ]
 		isRoot = (dirPtr.path == "/")
 
-		if not isRoot then choices.push("<color=#"+getColorString(dirPtr.parent)+">" + dirPtr.parent.permissions + " /..</color>")
-		
+		if not isRoot then choices.push("<color=#"+getColorString(dirPtr.parent)+">" + dirPtr.parent.permissions + "                   <..></color>")
+			
 		for directory in directories			
-			choices.push("<color=#"+getColorString(directory)+">" + directory.permissions + " /" + padSpaces(directory.name, 20, ".") +"<dir></color>")
+			choices.push("<color=#"+getColorString(directory)+">" + directory.permissions + " " + padSpacesRight(directory.owner, 8, " ") + " " + padSpaces(directory.group, 8, " ") + " ./" + padSpaces(directory.name, 19, ".") +"<dir></color>")
 		end for
+
+		if files.len > 25 then 
+			files = files[0:24]
+			print("Possible file bomb detected.  Only showing the first 25 files.")
+		end if
 		
 		for file in files
 			binString = "<binary>"
 			if not file.is_binary then binString = "<text>"
-			choices.push("<color=#"+getColorString(file)+">" + file.permissions + " " + padSpaces(file.name, 20, ".") + padSpaces(binString, 9) + file.size + " bytes</color>")
+			choices.push("<color=#"+getColorString(file)+">" + file.permissions + " " + padSpacesRight(file.owner, 8, " ") + " " + padSpaces(file.group, 8, " ") + " " + padSpaces(file.name, 20, ".") + "." + padSpaces(binString, 9) + file.size + " bytes</color>")
 		end for
 		
 		choices.push("--- Stop browsing files ---")
@@ -764,7 +812,9 @@ browseFiles = function(dirPtr, hostInfo = "")
 			choicesb.push("Download file")
 			choicesb.push("Over-write file")
 			choicesb.push("Delete")
+			choicesb.push("Append")
 			choicesb.push("Scan for and crack passwords")
+			//choicesb.push("Unlock all files from here down")
 			choicesb.push("Do nothing")
 			choiceb = get_choice(choicesb, choicesb.len-1)
 			if choiceb == choicesb.len-1 then break
@@ -790,7 +840,7 @@ browseFiles = function(dirPtr, hostInfo = "")
 				x = user_input("<b>Please enter what you would like to replace the contents of this file with.</b>\n")
 				x = filePtr.set_content(x)
 				if(x == 1) then
-					print("File downloaded successfully.")
+					print("File overwritten successfully.")
 				else
 					error(x)
 				end if
@@ -812,8 +862,15 @@ browseFiles = function(dirPtr, hostInfo = "")
 					crackPasswordFile(filePtr)
 					print("Cracked passwords have been saved in <b><i>" + home_dir + "/crackedPasswords.txt</b></i>")
 				end if
+			else if choiceb == 6 then
+				x = user_input("<b>Please enter what you would like to add to the contents of this file.</b>\n")
+				x = filePtr.set_content(filePtr.content + "\n" + x)
+				if(x == 1) then
+					print("File appended successfully.")
+				else
+					error(x)
+				end if			
 			end if
-		
 		end if
 	end while
 end function
@@ -829,6 +886,8 @@ for param in params
 	if ipAddr then break
 end for
 
+
+
 print("<color=#FF1111>  *      `           `             ) </color>")
 print("<color=#DD4433> (  `       `               `     ( /( </color>")
 print("<color=#BB8855> )\))(     (       `  (   `       )\())</color>")
@@ -843,7 +902,6 @@ print()
 if not ipAddr then exit("<B>Usage: microx (optional -v) <IP Address></B>")
 
 while 1
-	
 	if is_lan_ip(ipAddr) then
 		displayLocalMap(ipAddr)
 		metaLibs = extractMetaLibs(ipAddr)
@@ -892,7 +950,7 @@ while 1
 		if typeof(exploitObj) == "shell" or typeof(exploitObj) == "ftpshell" then
 			result = get_yesno(false, typeof(exploitObj) + ": This can alert the admin.  Are you sure you want to open it now?")
 			if result then
-				get_shell.launch("LogViewer.exe")
+				get_shell.launch("/usr/bin/AdminMonitor.exe")
 				exploitObj.start_terminal
 			end if
 		else if typeof(exploitObj) == "computer" then
@@ -903,6 +961,7 @@ while 1
 				choices.push("Mess with users")
 				choices.push("Mess with processes")
 				choices.push("Scan entire machine for passwords (and crack them)")
+				choices.push("Scan entire machine for vulnerable directories and files")
 				choices.push("Nothing.")
 				choice = get_choice(choices, choices.len-1)
 				if choice == choices.len-1 then break
@@ -924,20 +983,31 @@ while 1
 				else if choice == 5 then
 					crackAllFiles(exploitObj.File("/"), metaLib.public_ip + " --> " + metaLib.local_ip)
 					print("Cracked passwords have been saved in <b><i>" + home_dir + "/crackedPasswords.txt</b></i>")
+				else if choice == 6 then
+					findUnlocked(exploitObj.File("/"))
 				end if
 			end while
 		else if typeof(exploitObj) == "file" then
 			choices = ["\n\n<b>You have unlocked file access.  You can:</b>"]
 			choices.push("Browse Files")
 			choices.push("Scan entire machine for passwords (and crack them)")
+			choices.push("Scan entire machine for vulnerable directories and files")
 			choices.push("Nothing.")
 			choice = get_choice(choices, choices.len-1)
 			if choice == choices.len-1 then break
 			if choice == 1 then
 				browseFiles(exploitObj)
 			else if choice == 2 then
+				while exploitObj.parent
+					exploitObj = exploitObj.parent
+				end while
 				crackAllFiles(exploitObj, metaLib.public_ip + " --> " + metaLib.local_ip)
 				print("Cracked passwords have been saved in <b><i>" + home_dir + "/crackedPasswords.txt</b></i>")
+			else if choice == 3 then
+				while exploitObj.parent
+					exploitObj = exploitObj.parent
+				end while
+				findUnlocked(exploitObj)
 			end if
 		end if
 	end while
